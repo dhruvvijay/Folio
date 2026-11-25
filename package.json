@@ -1,0 +1,13 @@
+{
+  "name": "folio-finance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-worker.mjs",
+    "build:portable": "node scripts/build-worker.mjs --portable",
+    "start": "node portable/server.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
+}

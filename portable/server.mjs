@@ -1,0 +1,230 @@
+import { once } from "node:events";
+import { createServer } from "node:http";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
+import folioWorker from "../dist/server/index.js";
+import { createAuth } from "./auth.mjs";
+import { getDatabase } from "./database.mjs";
+
+const owner = "folio-portable-owner";
+const hopByHop = new Set([
+  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+  "te", "trailer", "transfer-encoding", "upgrade",
+]);
+
+function readConfiguration(env) {
+  const siteUrl = env.FOLIO_ORIGIN || env.RENDER_EXTERNAL_URL || "http://localhost:8080";
+  let url;
+  try {
+    url = new URL(siteUrl);
+  } catch {
+    throw new Error("Set FOLIO_ORIGIN to the app URL.");
+  }
+  const validUrl = (url.protocol === "http:" || url.protocol === "https:")
+    && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+  if (!validUrl || (!env.FOLIO_ORIGIN && env.RENDER_EXTERNAL_URL && url.protocol !== "https:")) {
+    throw new Error("Set FOLIO_ORIGIN to an HTTP or HTTPS origin with no path. Render requires HTTPS.");
+  }
+
+  const port = Number(env.PORT ?? 8080);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error("Set PORT to an integer TCP port.");
+  }
+  return { origin: url.origin, port };
+}
+
+function targetUrl(value, origin) {
+  if (!value?.startsWith("/")) return null;
+  try {
+    const target = new URL(value, origin);
+    return target.origin === origin && !target.hash ? target : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasCanonicalHost(req, publicUrl) {
+  const host = req.headers.host;
+  if (!host || req.headersDistinct.host?.length !== 1 || /[\s/\\@?#,]/u.test(host)) return false;
+  try {
+    return new URL(`${publicUrl.protocol}//${host}`).origin === publicUrl.origin;
+  } catch {
+    return false;
+  }
+}
+
+function plainResponse(req, res, status, message, headers = {}) {
+  res.writeHead(status, {
+    "Cache-Control": "no-store",
+    "Content-Type": "text/plain; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    ...headers,
+  });
+  res.end(req.method === "HEAD" ? undefined : message);
+}
+
+async function readiness(req, res, database) {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    plainResponse(req, res, 405, "Method not allowed.\n", { Allow: "GET, HEAD" });
+    return;
+  }
+  try {
+    if (await database.check() === false) {
+      plainResponse(req, res, 503, "Unavailable\n");
+      return;
+    }
+    plainResponse(req, res, 200, "OK\n");
+  } catch {
+    plainResponse(req, res, 503, "Unavailable\n");
+  }
+}
+
+function incomingBody(req) {
+  const chunks = req.iterator({ destroyOnReturn: false });
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await chunks.next();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    async cancel() {
+      // A rejected upload can still receive its HTTP response on this connection.
+      try {
+        await chunks.return();
+      } finally {
+        req.resume();
+      }
+    },
+  });
+}
+
+function workerRequest(req, target, publicUrl) {
+  const headers = new Headers();
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    const name = req.rawHeaders[index].toLowerCase();
+    if (hopByHop.has(name) || name === "authorization" || name === "oai-sites-authorization"
+        || name.startsWith("oai-authenticated-") || name === "forwarded" || name.startsWith("x-forwarded-")) continue;
+    headers.append(name, req.rawHeaders[index + 1]);
+  }
+  if (headers.get("origin") !== publicUrl.origin) headers.delete("origin");
+  headers.set("host", publicUrl.host);
+  headers.set("oai-authenticated-user-id", owner);
+  const method = req.method;
+  const options = { method, headers };
+  if (method !== "GET" && method !== "HEAD") {
+    options.body = incomingBody(req);
+    options.duplex = "half";
+  }
+  return new Request(target, options);
+}
+
+async function sendWorkerResponse(response, res) {
+  for (const [name, value] of response.headers) {
+    if (name !== "set-cookie" && !hopByHop.has(name)) res.setHeader(name, value);
+  }
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length) res.setHeader("Set-Cookie", cookies);
+  res.statusCode = response.status;
+  if (!response.body) {
+    res.end();
+    return;
+  }
+  await pipeline(Readable.fromWeb(response.body), res);
+}
+
+export async function startServer(env = process.env, {
+  databaseFactory = getDatabase,
+  authFactory = createAuth,
+} = {}) {
+  const { origin, port } = readConfiguration(env);
+  const publicUrl = new URL(origin);
+  const auth = authFactory({ env, origin });
+  const database = await databaseFactory(env);
+  const workerEnv = { DB: database.DB };
+
+  async function handle(req, res) {
+    const target = targetUrl(req.url, origin);
+    if (target?.pathname === "/healthz") {
+      await readiness(req, res, database);
+      return;
+    }
+    if (!hasCanonicalHost(req, publicUrl)) {
+      plainResponse(req, res, 421, "Use the configured Folio URL.\n");
+      return;
+    }
+    if (!(await auth.authenticate(req, res))) return;
+    if (!target) {
+      plainResponse(req, res, 400, "Invalid request target.\n");
+      return;
+    }
+    if (req.method === "TRACE" || req.method === "TRACK") {
+      plainResponse(req, res, 405, "Method not allowed.\n");
+      return;
+    }
+
+    const response = await folioWorker.fetch(workerRequest(req, target, publicUrl), workerEnv);
+    await sendWorkerResponse(response, res);
+  }
+
+  const server = createServer({ headersTimeout: 15_000, requestTimeout: 30_000 }, (req, res) => {
+    void handle(req, res).catch(() => {
+      if (res.destroyed || res.writableEnded) return;
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      plainResponse(req, res, 500, "The request could not be completed.\n");
+    });
+  });
+
+  try {
+    const listening = once(server, "listening");
+    server.listen(port, "0.0.0.0");
+    await listening;
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
+
+  let closing;
+  function close() {
+    closing ??= (async () => {
+      const deadline = setTimeout(() => server.closeAllConnections(), 10_000);
+      deadline.unref();
+      try {
+        await new Promise((resolve, reject) => {
+          server.close(error => error ? reject(error) : resolve());
+        });
+      } finally {
+        clearTimeout(deadline);
+        await database.close();
+      }
+    })();
+    return closing;
+  }
+  return { server, origin, close };
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const { server, close } = await startServer();
+    console.log(`Folio is listening on port ${server.address().port}.`);
+    for (const signal of ["SIGTERM", "SIGINT"]) {
+      process.once(signal, () => {
+        void close().catch(() => {
+          console.error("Folio could not shut down cleanly.");
+          process.exitCode = 1;
+        });
+      });
+    }
+  } catch {
+    console.error("Folio could not start. Check its origin, port, authentication credentials, and database settings.");
+    process.exitCode = 1;
+  }
+}

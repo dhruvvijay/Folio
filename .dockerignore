@@ -1,0 +1,13 @@
+**
+!package.json
+!package-lock.json
+!client/
+!client/**
+!scripts/
+!scripts/build-worker.mjs
+!worker/
+!worker/**
+!drizzle/
+!drizzle/**
+!portable/
+!portable/**

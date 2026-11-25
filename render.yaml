@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: folio-finance
+    runtime: docker
+    plan: 0.5c-512mb
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    envVars:
+      - key: FOLIO_USERNAME
+        value: folio
+      - key: FOLIO_PASSWORD
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: folio-postgres
+          property: connectionString
+databases:
+  - name: folio-postgres
+    plan: basic-256mb
+    diskSizeGB: 1
+    databaseName: folio
+    user: folio
+    ipAllowList: []

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Folio brings your spending, budgets, savings goals, and cash flow into one personal finance workspace.">
+  <meta name="theme-color" content="#f7f7f2">
+  <title>Folio — Personal Finance</title>
+  <link rel="icon" type="image/svg+xml" href="folio.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="charts.css">
+  <link rel="stylesheet" href="reports.css">
+  <script defer src="ledger-data.js"></script>
+  <script defer src="ledger-schema.js"></script>
+  <script defer src="ledger-sync.js"></script>
+  <script defer src="ledger-assistant.js"></script>
+  <script defer src="charts.js"></script>
+  <script defer src="ledger-reports.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Sidebar"></aside>
+    <button class="scrim" type="button" aria-label="Close navigation" hidden></button>
+    <div class="workspace">
+      <header class="topbar" id="topbar"></header>
+      <main class="content" id="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <dialog class="dialog" id="dialog"></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <input type="file" accept=".csv,text/csv" id="csv-picker" hidden>
+  <input type="file" accept=".json,application/json" id="backup-picker" hidden>
+  <noscript>Enable JavaScript to use Folio.</noscript>
+</body>
+</html>
