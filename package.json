@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "npm run build:portable && node --test tests/*.test.mjs",
     "build": "node scripts/build-worker.mjs",
     "build:portable": "node scripts/build-worker.mjs --portable",
     "start": "node portable/server.mjs"

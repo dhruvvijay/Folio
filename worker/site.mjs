@@ -8,6 +8,7 @@ const folioCsp = [
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
+  "frame-ancestors 'none'",
 ].join("; ");
 
 function serveFolioAsset(request, path) {
@@ -15,7 +16,7 @@ function serveFolioAsset(request, path) {
     "Content-Security-Policy": folioCsp,
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
-    "Cache-Control": "private, no-cache",
+    "Cache-Control": "private, no-store",
   };
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response("Method not allowed", {

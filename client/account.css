@@ -1,0 +1,166 @@
+.folio-auth-check .app-shell { visibility: hidden; }
+.account-page {
+  --account-dark: #273421;
+  --account-olive: #50623e;
+  --account-border: #d7ddcb;
+  min-height: 100vh;
+}
+.account-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.account-intro {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #f8f8ec;
+  background: #293521;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(42px, 8vh, 102px);
+  padding: clamp(30px, 5vw, 78px);
+}
+.account-intro::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(176deg, #293521 15%, #293521ee 40%, #2935211a 84%),
+    url("/assistant-art.webp") right 60% bottom / auto 76% no-repeat,
+    #293521;
+}
+.account-brand { display: flex; align-items: center; gap: 10px; }
+.account-brand img { flex: 0 0 auto; }
+.account-brand span { font: 400 2.7rem/.9 var(--serif); letter-spacing: -.06em; }
+.account-brand i { color: #d9ee87; font-style: normal; }
+.account-intro-copy h2 {
+  max-width: 12ch;
+  font: 400 clamp(3.5rem, 6.5vw, 6.7rem)/.92 var(--serif);
+  letter-spacing: -.045em;
+}
+.account-intro-copy p { color: #e1e9d5; max-width: 29ch; margin-top: 24px; line-height: 1.6; }
+.account-entry { display: grid; place-items: center; padding: 44px clamp(25px, 5vw, 72px); }
+.account-entry-card { width: min(100%, 405px); }
+.account-heading { font: 400 clamp(2.65rem, 4.9vw, 4.05rem)/.98 var(--serif); letter-spacing: -.025em; }
+.account-heading:focus { outline: none; }
+.account-intro-text { margin: 12px 0 26px; color: #586052; line-height: 1.55; }
+.account-form { display: grid; gap: 15px; }
+.account-field { display: grid; gap: 6px; min-width: 0; }
+.account-field label { font-size: .9rem; font-weight: 700; color: #343c2f; }
+.account-field input:not([type=checkbox]) {
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  padding: 10px 13px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid #d6dbcc;
+  border-radius: 8px;
+}
+.account-field input::placeholder { color: #747b6f; }
+.account-field input[aria-invalid=true] { border-color: #a65040; }
+.account-password { position: relative; }
+.account-password input:not([type=checkbox]) { padding-right: 78px; }
+.account-password-toggle {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  right: 5px;
+  top: 4px;
+  bottom: 4px;
+  min-width: 65px;
+  border: 0;
+  border-radius: 5px;
+  color: #485e35;
+  background: transparent;
+  font-size: .83rem;
+  font-weight: 700;
+}
+.account-password-toggle:hover { background: #ebefe2; }
+.account-help, .account-field-error { font-size: .83rem; line-height: 1.45; }
+.account-help { color: #626b5b; }
+.account-field-error { color: #8c3d32; }
+.account-form .button { min-height: 43px; font-size: .91rem; }
+.account-form .button:disabled { cursor: wait; opacity: .65; }
+.account-entry-card .account-form > .button { width: 100%; min-height: 46px; margin-top: 2px; }
+.account-message {
+  padding: 10px 13px;
+  color: #394e32;
+  background: #e7eedc;
+  border: 1px solid #d2dfc5;
+  border-radius: 8px;
+  line-height: 1.45;
+  font-size: .9rem;
+}
+.account-message[data-error=true] { color: #7b362c; background: #faede7; border-color: #edd1c5; }
+.account-links { display: flex; flex-wrap: wrap; gap: 12px 17px; margin-top: 21px; color: #555f4d; font-size: .92rem; }
+.account-link {
+  color: #3e532d;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.account-link:hover { color: #24331a; }
+.account-recovery-code {
+  display: block;
+  user-select: all;
+  overflow-wrap: anywhere;
+  border: 1px solid #ced9bf;
+  border-radius: 9px;
+  padding: 15px 16px;
+  color: #273421;
+  background: #edf1e2;
+  font: 700 clamp(1rem, 2.6vw, 1.2rem)/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .025em;
+}
+.account-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-ack { display: flex; align-items: flex-start; gap: 9px; font-size: .91rem; line-height: 1.45; }
+.account-ack input { width: 17px; height: 17px; flex: 0 0 17px; margin: 2px 0 0; accent-color: #536a38; }
+.account-recovery .account-message { margin: 0; }
+.account-recovery .button:disabled { cursor: default; }
+.account-settings { display: grid; gap: 14px; }
+.account-settings .account-section { padding: 19px; }
+.account-section h2 { font-size: 1.06rem; margin-bottom: 8px; }
+.account-section p { color: var(--muted); overflow-wrap: anywhere; line-height: 1.55; }
+.account-section .account-form { margin-top: 16px; }
+.account-section .account-form .button { justify-self: start; }
+.account-security-panel { padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--line); }
+.account-security-panel summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #3e532d;
+  font-size: .94rem;
+  font-weight: 700;
+  padding: 4px 0;
+}
+.account-security-panel summary:focus-visible { outline: 2px solid #647d33; outline-offset: 3px; }
+.account-security-panel.danger summary { color: #893f32; }
+.account-settings .account-message[data-error=true] { color: #7b362c; }
+.account-settings .account-message { color: #394e32; }
+.account-dialog {
+  padding: 26px;
+  width: min(calc(100% - 28px), 485px);
+  max-height: calc(100dvh - 28px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.account-dialog::backdrop { background: #202719a5; }
+.account-dialog .account-heading { font-size: 2.75rem; }
+@media (max-width: 740px) {
+  .account-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .account-intro { padding: 18px 24px; }
+  .account-intro::before, .account-intro-copy { display: none; }
+  .account-intro .account-brand img { width: 32px; height: 32px; }
+  .account-intro .account-brand span { font-size: 2.3rem; }
+  .account-entry { place-items: start center; padding: 32px 22px 48px; }
+}
+
+.folio-account-profile-details { flex: 1; min-width: 0; }
+.folio-account-profile-details .profile-name,
+.folio-account-profile-details .profile-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folio-account-signout { margin-top: 9px; min-height: 34px; padding: 5px 6px; text-align: left; }

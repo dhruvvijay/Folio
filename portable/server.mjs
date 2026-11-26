@@ -1,5 +1,6 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { isIP } from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -8,7 +9,6 @@ import folioWorker from "../dist/server/index.js";
 import { createAuth } from "./auth.mjs";
 import { getDatabase } from "./database.mjs";
 
-const owner = "folio-portable-owner";
 const hopByHop = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
   "te", "trailer", "transfer-encoding", "upgrade",
@@ -104,17 +104,22 @@ function incomingBody(req) {
   });
 }
 
-function workerRequest(req, target, publicUrl) {
+function workerRequest(req, target, publicUrl, env) {
   const headers = new Headers();
   for (let index = 0; index < req.rawHeaders.length; index += 2) {
     const name = req.rawHeaders[index].toLowerCase();
-    if (hopByHop.has(name) || name === "authorization" || name === "oai-sites-authorization"
+    if (hopByHop.has(name) || name === "authorization" || name === "oai-sites-authorization" || name === "x-folio-client-key"
         || name.startsWith("oai-authenticated-") || name === "forwarded" || name.startsWith("x-forwarded-")) continue;
     headers.append(name, req.rawHeaders[index + 1]);
   }
   if (headers.get("origin") !== publicUrl.origin) headers.delete("origin");
   headers.set("host", publicUrl.host);
-  headers.set("oai-authenticated-user-id", owner);
+  // Render's public ingress overwrites CF-Connecting-IP. Trust it only on Render;
+  // self-hosted installations use the socket and ignore arbitrary proxy headers.
+  const renderClient = req.headers["cf-connecting-ip"];
+  const trustedClient = env.RENDER === "true" && typeof renderClient === "string"
+    && req.headersDistinct["cf-connecting-ip"]?.length === 1 && isIP(renderClient);
+  headers.set("x-folio-client-key", trustedClient ? renderClient : req.socket.remoteAddress || "unknown");
   const method = req.method;
   const options = { method, headers };
   if (method !== "GET" && method !== "HEAD") {
@@ -144,9 +149,14 @@ export async function startServer(env = process.env, {
 } = {}) {
   const { origin, port } = readConfiguration(env);
   const publicUrl = new URL(origin);
-  const auth = authFactory({ env, origin });
   const database = await databaseFactory(env);
-  const workerEnv = { DB: database.DB };
+  let auth;
+  try {
+    auth = await authFactory({ env, origin, database });
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
 
   async function handle(req, res) {
     const target = targetUrl(req.url, origin);
@@ -158,7 +168,6 @@ export async function startServer(env = process.env, {
       plainResponse(req, res, 421, "Use the configured Folio URL.\n");
       return;
     }
-    if (!(await auth.authenticate(req, res))) return;
     if (!target) {
       plainResponse(req, res, 400, "Invalid request target.\n");
       return;
@@ -168,7 +177,77 @@ export async function startServer(env = process.env, {
       return;
     }
 
-    const response = await folioWorker.fetch(workerRequest(req, target, publicUrl), workerEnv);
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    if (publicUrl.protocol === "https:") res.setHeader("Strict-Transport-Security", "max-age=31536000");
+    let request = workerRequest(req, target, publicUrl, env);
+    const authResponse = await auth.handle(request);
+    if (authResponse) {
+      await sendWorkerResponse(authResponse, res);
+      return;
+    }
+    if (target.pathname === "/api/ledger") {
+      const user = await auth.authenticate(request);
+      if (!user) {
+        await sendWorkerResponse(Response.json({ error: "Sign in to access your ledger." }, {
+          status: 401, headers: { "Cache-Control": "private, no-store" },
+        }), res);
+        return;
+      }
+      // Finish bounded uploads before acquiring a database transaction or user lock.
+      if (request.body) {
+        const maxBytes = globalThis.LedgerSchema.MAX_BYTES + 1024;
+        const reader = request.body.getReader();
+        const chunks = [];
+        let size = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > maxBytes) {
+              await reader.cancel();
+              plainResponse(req, res, 413, "This ledger exceeds the maximum upload size.\n");
+              return;
+            }
+            chunks.push(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        request = new Request(request.url, {
+          method: request.method, headers: request.headers, body: Buffer.concat(chunks, size),
+        });
+      }
+      const response = await database.transaction(async tx => {
+        // Serialize ledger reads/writes with account deletion and credential changes.
+        const locked = await tx.query("UPDATE folio_users SET updated_at = updated_at WHERE id = ? RETURNING id", [user.id]);
+        const current = locked.rows.length ? await auth.authenticate(request, tx) : null;
+        if (!current || current.id !== user.id) {
+          return Response.json({ error: "Your session ended. Sign in again." }, {
+            status: 401, headers: { "Cache-Control": "private, no-store" },
+          });
+        }
+        const headers = new Headers(request.headers);
+        headers.set("oai-authenticated-user-id", current.id);
+        headers.delete("cookie");
+        headers.delete("x-folio-client-key");
+        const trustedRequest = new Request(request, { headers });
+        const DB = {
+          prepare(sql) {
+            return { bind: (...parameters) => ({ first: async () => (await tx.query(sql, parameters)).rows[0] ?? null }) };
+          },
+        };
+        return folioWorker.fetch(trustedRequest, { DB });
+      });
+      await sendWorkerResponse(response, res);
+      return;
+    }
+    if (target.pathname === "/login" || target.pathname === "/login/") {
+      target.pathname = "/login.html";
+      request = new Request(target, { method: request.method, headers: request.headers });
+    }
+    const response = await folioWorker.fetch(request, {});
     await sendWorkerResponse(response, res);
   }
 
@@ -224,7 +303,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       });
     }
   } catch {
-    console.error("Folio could not start. Check its origin, port, authentication credentials, and database settings.");
+    console.error("Folio could not start. Check its origin, port, and database settings.");
     process.exitCode = 1;
   }
 }

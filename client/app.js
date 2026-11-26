@@ -6,13 +6,19 @@
   const C = window.FolioCharts;
   const S = window.LedgerSchema;
   const R = window.LedgerReports;
+  const account = window.FolioAccount;
   const main = document.querySelector("#main");
+  const sidebar = document.querySelector("#sidebar");
+  const topbar = document.querySelector("#topbar");
   const dialog = document.querySelector("#dialog");
   const shell = document.querySelector(".app-shell");
   const scrim = document.querySelector(".scrim");
   const picker = document.querySelector("#csv-picker");
   const backupPicker = document.querySelector("#backup-picker");
   const toast = document.querySelector("#toast");
+  const gate = document.createElement("main");
+  gate.className = "content";
+  gate.tabIndex = -1;
 
   const icons = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -83,9 +89,9 @@
     settings: ["Settings", "settings"],
   };
 
-  let state = D.read();
+  let state;
   let page = "overview";
-  let month = isDemo() ? D.DEFAULT_MONTH : D.today().slice(0, 7);
+  let month = D.today().slice(0, 7);
   let range = 6;
   let filters = { search: "", category: "", type: "", period: "" };
   let modelAvailable = false;
@@ -95,6 +101,10 @@
   let pendingAction;
   let syncStatus = { phase: "connecting", cloud: false, legacyAvailable: false };
   let activeWorkspace = null;
+  let accountUser = null;
+  let accountEnding = false;
+  let workspaceReady = false;
+  let signingOut = false;
   let sync;
 
   const syncLabels = {
@@ -147,8 +157,17 @@
     return `<a class="nav-item" href="#${key}"${page === key ? ' aria-current="page"' : ""}>${icon(glyph, 17)}${escape(name)}</a>`;
   }
 
+  function sidebarProfile() {
+    const name = accountUser?.name || (accountUser ? "Your account" : "Personal workspace");
+    const label = accountUser?.email || "Private ledger";
+    return `<div class="profile folio-account-profile">
+      <span class="avatar">${icon("lock", 15)}</span>
+      <div class="folio-account-profile-details"><div class="profile-name" title="${escape(name)}">${escape(name)}</div><div class="profile-sub" title="${escape(label)}">${escape(label)}</div></div>
+    </div>${accountUser ? '<button type="button" class="text-link folio-account-signout" data-action="account-logout">Sign out</button>' : ""}`;
+  }
+
   function updateNavigation() {
-    document.querySelector("#sidebar").innerHTML = `
+    sidebar.innerHTML = `
       <a class="brand" href="#overview" aria-label="Folio overview">
         <img src="folio.svg" width="35" height="35" alt=""><span class="brand-word">folio<span>.</span></span>
       </a>
@@ -160,9 +179,9 @@
       <nav class="nav-group" aria-label="Intelligence">${navLink("assistant")}</nav>
       <div class="sidebar-bottom">
         ${navLink("settings")}
-        <div class="profile"><span class="avatar">${icon("lock", 15)}</span><div><div class="profile-name">Personal workspace</div><div class="profile-sub">Private ledger</div></div></div>
+        ${sidebarProfile()}
       </div>`;
-    document.querySelector("#topbar").innerHTML = `
+    topbar.innerHTML = `
       <div class="crumb">
         ${iconButton("Open navigation", "menu", "toggle-menu", "", "bare menu-button")}
         <span class="crumb-parent">Workspace</span><span class="crumb-divider" aria-hidden="true">/</span>
@@ -422,14 +441,15 @@
   }
 
   function syncSettings() {
-    const { phase, legacyAvailable, pending } = syncStatus;
+    const { phase, pending } = syncStatus;
+    const legacyAvailable = !accountUser && syncStatus.legacyAvailable;
     const label = syncLabel(syncStatus);
     const controls = [];
     if (phase === "conflict") {
       controls.push(button("Keep this version", "keep-local", { type: "primary" }));
       controls.push(button("Use synced version", "load-cloud"));
     }
-    if (phase === "migration") {
+    if (legacyAvailable && phase === "migration") {
       controls.push(button("Sync device ledger", "accept-legacy", { type: "primary" }));
       controls.push(button("Continue without copying", "skip-legacy"));
     }
@@ -446,6 +466,7 @@
     const currencies = [["USD", "USD · US Dollar"], ["INR", "INR · Indian Rupee"], ["EUR", "EUR · Euro"], ["GBP", "GBP · British Pound"], ["CAD", "CAD · Canadian Dollar"], ["AUD", "AUD · Australian Dollar"], ["SGD", "SGD · Singapore Dollar"], ["AED", "AED · UAE Dirham"], ["JPY", "JPY · Japanese Yen"]];
     return `${pageHead("Settings", "Manage your currency, account sync, and backups.")}
       <div class="settings">
+        ${accountUser ? '<div id="folio-account-settings"></div>' : ""}
         <section class="card" id="sync-settings" aria-label="Account sync">${syncSettings()}</section>
         <section class="card"><h2>Ledger preferences</h2><p>Set your balance before the first transaction. Changing the currency updates the currency label on every amount.</p>
           <form id="settings-form">
@@ -469,12 +490,15 @@
   const views = { overview, transactions, budgets, goals, bills, reports, assistant, settings };
 
   function render() {
+    if (!workspaceReady) return;
     updateNavigation();
     main.innerHTML = views[page]();
+    if (page === "settings" && accountUser) account.mountSettings();
     updateSyncWidgets();
   }
 
   function navigate() {
+    if (!workspaceReady) return;
     const key = location.hash.slice(1);
     const next = Object.hasOwn(pages, key) ? key : "overview";
     const changed = next !== page;
@@ -495,6 +519,7 @@
   }
 
   function save(next, message) {
+    if (!workspaceReady) return false;
     try {
       next = S.validate(next);
     } catch (error) {
@@ -681,10 +706,12 @@
   }
 
   async function restoreBackup(file) {
-    if (!file) return;
+    if (!file || !workspaceReady) return;
     try {
       if (file.size > S.MAX_BYTES) throw new Error("Choose a Folio backup smaller than 1 MB.");
-      const next = S.decodeBackup(await file.text());
+      const text = await file.text();
+      if (!workspaceReady) return;
+      const next = S.decodeBackup(text);
       confirmAction("Restore this backup?",
         `This replaces the current ledger with ${next.transactions.length} transactions, ${next.budgets.length} budgets, ${next.goals.length} savings goals, and ${next.recurring.length} bills from the backup.`,
         "Restore ledger", () => {
@@ -693,12 +720,41 @@
           return saved;
         }, true);
     } catch (error) {
-      modal("Restore backup", `<p>${escape(error.message)}</p>`);
+      if (workspaceReady) modal("Restore backup", `<p>${escape(error.message)}</p>`);
     }
+  }
+
+  async function prepareLogout() {
+    if (!syncStatus.pending || await sync.flush()) return true;
+    if (!workspaceReady) return false;
+    return new Promise(resolve => {
+      dialog.addEventListener("close", () => resolve(false), { once: true });
+      confirmAction("Sign out with unsynced changes?",
+        "Some changes are still in this tab. You can cancel and download a full backup from Settings.",
+        "Sign out", () => { resolve(true); return true; }, true);
+    });
+  }
+
+  async function signOut() {
+    if (signingOut || !accountUser) return;
+    signingOut = true;
+    try {
+      if (!account.registerLogoutGuard && !await prepareLogout()) return;
+      await account.logout();
+    } catch (error) {
+      if (workspaceReady) notify(error.message || "Folio couldn’t sign you out. Try again.");
+    } finally {
+      signingOut = false;
+    }
+  }
+
+  function emptyLedger(currency = "USD") {
+    return { transactions: [], budgets: [], goals: [], recurring: [], openingBalance: 0, currency, demo: false };
   }
 
   const actions = {
     "toggle-menu": () => setMenu(!shell.classList.contains("nav-open")),
+    "account-logout": () => { void signOut(); },
     close: () => dialog.close(),
     confirm: () => { if (pendingAction?.()) dialog.close(); },
     alerts,
@@ -741,7 +797,7 @@
     "start-fresh": () => confirmAction("Start with an empty ledger?", "This replaces the current workspace with an empty ledger. Download a full backup first if you need a copy.", "Start fresh", () => {
       const oldMonth = month;
       month = D.today().slice(0, 7);
-      const saved = save({ transactions: [], budgets: [], goals: [], recurring: [], openingBalance: 0, currency: state.currency, demo: false }, "Your new ledger is ready.");
+      const saved = save(emptyLedger(state.currency), "Your new ledger is ready.");
       if (saved) clearSession();
       else month = oldMonth;
       return saved;
@@ -829,10 +885,12 @@
   }
 
   async function importCSV(file) {
-    if (!file) return;
+    if (!file || !workspaceReady) return;
     try {
       if (file.size > 5 * 1024 * 1024) throw new Error("Choose a CSV file smaller than 5 MB.");
-      const imported = D.parseCSV(await file.text());
+      const text = await file.text();
+      if (!workspaceReady) return;
+      const imported = D.parseCSV(text);
       const existing = new Map();
       for (const row of state.transactions) {
         const key = transactionKey(row);
@@ -856,7 +914,7 @@
         if (page === "transactions") main.innerHTML = transactions();
       }
     } catch (error) {
-      modal("CSV import", `<p>${escape(error.message)}</p>`);
+      if (workspaceReady) modal("CSV import", `<p>${escape(error.message)}</p>`);
     }
   }
 
@@ -881,12 +939,14 @@
   });
 
   document.addEventListener("click", event => {
+    if (!workspaceReady) return;
     const target = event.target.closest("[data-action]");
     if (target) actions[target.dataset.action]?.(target.dataset.value || "");
     if (event.target.closest(".sidebar a")) setMenu(false);
   });
 
   document.addEventListener("input", event => {
+    if (!workspaceReady) return;
     const field = event.target;
     if (field.dataset.filter === "search") {
       filters.search = field.value;
@@ -896,6 +956,7 @@
   });
 
   document.addEventListener("change", event => {
+    if (!workspaceReady) return;
     const field = event.target;
     if (field.dataset.control === "month") {
       month = field.value;
@@ -914,6 +975,7 @@
   });
 
   document.addEventListener("submit", event => {
+    if (!workspaceReady) return;
     const form = event.target;
     if (form.dataset.form) {
       event.preventDefault();
@@ -931,28 +993,139 @@
     }
   });
 
-  sync = window.LedgerSync.create({
-    initialState: state,
-    hasLegacy: D.hasSavedState(),
-    saveDevice: D.save,
-    onState(next, { workspace }) {
-      if (workspace === activeWorkspace && JSON.stringify(next) === JSON.stringify(state)) return;
-      if (workspace !== activeWorkspace) clearSession();
-      activeWorkspace = workspace;
-      const wasDemo = isDemo();
-      state = next;
-      if (month === D.DEFAULT_MONTH && wasDemo && !isDemo()) month = D.today().slice(0, 7);
-      render();
-    },
-    onStatus(status) {
-      syncStatus = status;
-      updateSyncWidgets();
-    },
+  function showWorkspaceGate(title, detail, retry = false) {
+    shell.hidden = true;
+    document.querySelector(".skip-link").hidden = true;
+    if (!gate.isConnected) shell.before(gate);
+    gate.innerHTML = `<div class="page-head"><div><h1>${escape(title)}</h1><p role="status">${escape(detail)}</p></div>
+      ${retry ? '<button type="button" class="button primary">Try again</button>' : ""}</div>`;
+    gate.querySelector("button")?.addEventListener("click", () => location.reload());
+  }
+
+  function clearAccountWorkspace() {
+    if (accountEnding) return;
+    accountEnding = true;
+    workspaceReady = false;
+    accountUser = null;
+    state = null;
+    activeWorkspace = null;
+    pendingAction = undefined;
+    clearSession();
+    if (dialog.open) dialog.close();
+    dialog.replaceChildren();
+    clearTimeout(timer);
+    toast.textContent = "";
+    toast.classList.remove("visible");
+    picker.value = "";
+    backupPicker.value = "";
+    main.replaceChildren();
+    sidebar.replaceChildren();
+    topbar.replaceChildren();
+    setMenu(false);
+    showWorkspaceGate("Checking your session", "Opening your Folio workspace.");
+    sync?.dispose();
+    sync = undefined;
+  }
+
+  function mountWorkspace() {
+    if (workspaceReady || accountEnding) return;
+    workspaceReady = true;
+    gate.remove();
+    shell.hidden = false;
+    document.querySelector(".skip-link").hidden = false;
+    navigate();
+    void A.canExplain().then(available => {
+      if (!workspaceReady) return;
+      modelAvailable = available;
+      if (available && page === "assistant") main.innerHTML = assistant();
+    }).catch(() => {});
+  }
+
+  function createWorkspaceSync(options) {
+    return window.LedgerSync.create({
+      initialState: state,
+      ...options,
+      onState(next, { source, workspace }) {
+        if (accountEnding || source === "account-cleared") return;
+        if (workspace === activeWorkspace && JSON.stringify(next) === JSON.stringify(state)) return;
+        if (workspace !== activeWorkspace) clearSession();
+        activeWorkspace = workspace;
+        const wasDemo = isDemo();
+        state = next;
+        if (!workspaceReady) month = isDemo() ? D.DEFAULT_MONTH : D.today().slice(0, 7);
+        else if (month === D.DEFAULT_MONTH && wasDemo && !isDemo()) month = D.today().slice(0, 7);
+        render();
+      },
+      onStatus(status) {
+        if (accountEnding) return;
+        syncStatus = status;
+        if (accountUser && status.cloud) mountWorkspace();
+        if (workspaceReady) updateSyncWidgets();
+      },
+      onUnauthorized() {
+        if (!accountUser || accountEnding) return;
+        clearAccountWorkspace();
+        void Promise.resolve(account.invalidate()).then(() => {
+          if (account.user) location.replace("/login");
+        }, () => location.replace("/login"));
+      },
+    });
+  }
+
+  window.addEventListener("folio-auth-changed", event => {
+    if (!accountUser || accountEnding) return;
+    const user = event.detail?.user;
+    if (user?.id === accountUser.id) {
+      accountUser = user;
+      if (workspaceReady) {
+        updateNavigation();
+        updateSyncWidgets();
+      }
+      return;
+    }
+    clearAccountWorkspace();
+    location.reload();
   });
-  navigate();
-  void sync.start();
-  void A.canExplain().then(available => {
-    modelAvailable = available;
-    if (available && page === "assistant") main.innerHTML = assistant();
-  });
+
+  async function connectWorkspace() {
+    showWorkspaceGate("Checking your session", "Opening your Folio workspace.");
+    try {
+      const session = await account.ready;
+      if (session === null) {
+        state = D.read();
+        month = isDemo() ? D.DEFAULT_MONTH : month;
+        sync = createWorkspaceSync({ hasLegacy: D.hasSavedState(), saveDevice: D.save });
+        mountWorkspace();
+        await sync.start();
+        return;
+      }
+      if (session?.unavailable) {
+        showWorkspaceGate("Couldn’t check your session", session.message || "Check your connection and try again.", true);
+        return;
+      }
+      if (session?.user === null) {
+        location.replace("/login");
+        return;
+      }
+      if (typeof session?.user?.id !== "string" || !session.user.id) throw new Error("Account identity is missing.");
+      accountUser = session.user;
+      account.registerCleanup(clearAccountWorkspace);
+      account.registerLogoutGuard?.(prepareLogout);
+      state = emptyLedger();
+      const identity = new TextEncoder().encode(`folio:ledger-owner:v1\0${accountUser.id}`);
+      const digest = await window.crypto.subtle.digest("SHA-256", identity);
+      if (accountEnding) return;
+      const expectedWorkspace = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      sync = createWorkspaceSync({ accountMode: true, expectedWorkspace, freshState: emptyLedger });
+      showWorkspaceGate("Opening your ledger", "Connecting to your Folio account.");
+      await sync.start();
+      if (!workspaceReady && !accountEnding) {
+        showWorkspaceGate("Couldn’t open your ledger", syncStatus.message || "Check your connection and try again.", true);
+      }
+    } catch {
+      if (!workspaceReady && !accountEnding) showWorkspaceGate("Couldn’t open Folio", "Check your connection and try again.", true);
+    }
+  }
+
+  void connectWorkspace();
 })();
