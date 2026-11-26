@@ -65,20 +65,15 @@ function plainResponse(req, res, status, message, headers = {}) {
   res.end(req.method === "HEAD" ? undefined : message);
 }
 
-async function readiness(req, res, database) {
+function readiness(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") {
     plainResponse(req, res, 405, "Method not allowed.\n", { Allow: "GET, HEAD" });
     return;
   }
-  try {
-    if (await database.check() === false) {
-      plainResponse(req, res, 503, "Unavailable\n");
-      return;
-    }
-    plainResponse(req, res, 200, "OK\n");
-  } catch {
-    plainResponse(req, res, 503, "Unavailable\n");
-  }
+  // The server starts listening only after its database migration succeeds.
+  // Routine host probes must not wake a serverless database or consume its
+  // free compute allowance while there are no customer requests.
+  plainResponse(req, res, 200, "OK\n");
 }
 
 function incomingBody(req) {
@@ -161,7 +156,7 @@ export async function startServer(env = process.env, {
   async function handle(req, res) {
     const target = targetUrl(req.url, origin);
     if (target?.pathname === "/healthz") {
-      await readiness(req, res, database);
+      readiness(req, res);
       return;
     }
     if (!hasCanonicalHost(req, publicUrl)) {

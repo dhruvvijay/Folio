@@ -250,6 +250,9 @@ async function openPostgres(connectionString, schemas) {
 
 export async function getDatabase(env = process.env) {
   const postgres = Boolean(env.DATABASE_URL);
+  if (!postgres && (env.RENDER === "true" || env.FOLIO_REQUIRE_POSTGRES === "true")) {
+    throw new Error("Set DATABASE_URL to a persistent PostgreSQL database before starting Folio on this host.");
+  }
   try {
     const [ledgers, accounts] = await Promise.all([
       readFile(ledgerMigration, "utf8"),

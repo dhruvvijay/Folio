@@ -17,7 +17,7 @@ async function setup(t, { envOverride = {}, serverOptions = {} } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'folio-http-test-'));
   const env = { FOLIO_ORIGIN: origin, PORT: '0', FOLIO_SQLITE_PATH: path.join(dir, 'db.sqlite'), ...envOverride };
   let running = await startServer(env, serverOptions);
-  const inspect = await getDatabase(env);
+  const inspect = await getDatabase({ FOLIO_SQLITE_PATH: env.FOLIO_SQLITE_PATH });
   t.after(async () => { await running.close(); await inspect.close(); await rm(dir, { recursive: true, force: true }); });
   let address = `http://127.0.0.1:${running.server.address().port}`;
   async function call(route, { method = 'GET', body, cookie, headers = {}, source = origin } = {}) {
@@ -169,6 +169,7 @@ test('client IP headers are trusted only behind the declared Render ingress', as
   for (const render of [undefined, 'true']) {
     await t.test(render ? 'Render ingress' : 'ordinary host', async st => {
       const { call } = await setup(st, { envOverride: { RENDER: render }, serverOptions: {
+        databaseFactory: cfg => getDatabase({ FOLIO_SQLITE_PATH: cfg.FOLIO_SQLITE_PATH }),
         authFactory: () => ({ handle: req => Response.json({ client: req.headers.get('x-folio-client-key') }), authenticate: () => null }),
       } });
       const headers = { 'CF-Connecting-IP': '198.51.100.42', 'X-Forwarded-For': '198.51.100.43', 'x-folio-client-key': 'forged' };
@@ -180,4 +181,14 @@ test('client IP headers are trusted only behind the declared Render ingress', as
       assert.notEqual(invalid.data.client, 'not-an-ip');
     });
   }
+});
+
+test('routine host health probes do not keep a serverless database awake', async t => {
+  const { call } = await setup(t, { serverOptions: {
+    databaseFactory: async cfg => {
+      const db = await getDatabase(cfg);
+      return { ...db, check: () => { throw new Error('A health probe must not issue a database query'); } };
+    },
+  } });
+  for (let attempt = 0; attempt < 3; attempt++) assert.equal((await call('/healthz')).status, 200);
 });

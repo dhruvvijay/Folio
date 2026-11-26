@@ -14,6 +14,11 @@ const account = `INSERT INTO folio_users (id, email, name, password_hash, recove
 const session = `INSERT INTO folio_sessions (token_hash, user_id, version, expires_at, created_at)
   VALUES ('session-hash-fixture', ?, 1, ?, ?)`;
 
+test("Render and external-database deployments refuse an ephemeral SQLite fallback", async () => {
+  await assert.rejects(getDatabase({ RENDER: "true" }), /Set DATABASE_URL/);
+  await assert.rejects(getDatabase({ FOLIO_REQUIRE_POSTGRES: "true" }), /Set DATABASE_URL/);
+});
+
 async function temporaryConfig(testContext) {
   const directory = await mkdtemp(join(tmpdir(), "folio-database-test-"));
   const databasePath = join(directory, "folio.sqlite");

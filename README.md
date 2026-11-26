@@ -23,13 +23,17 @@ The `folio-data` volume keeps your SQLite database across container replacements
 
 Compose binds to loopback. Copy `.env.example` to `.env` to change the host port or public origin. Folio accepts HTTP for local loopback development. For remote access, use an HTTPS reverse proxy that forwards the original hostname and set `FOLIO_ORIGIN` to the exact public HTTPS origin without a path.
 
-## Render
+## Free hosting with Render and Neon
 
-1. Give Render access to a Git repository containing these files.
-2. In Render, create a Blueprint from that repository. Render reads `render.yaml` and previews the Docker service and managed PostgreSQL resources before it provisions them.
-3. Review the prices in the preview. After the deployment succeeds, open the deployed `onrender.com` URL and create your account.
+1. Create a PostgreSQL project on [Neon's Free plan](https://neon.com/pricing). Choose a region near your Render web service. Keep the database connection string private and enable TLS (prefer `sslmode=verify-full`).
+2. Give Render access to a Git repository containing these files and create a Blueprint from it. `render.yaml` defines one **free** Docker web service and no paid resources.
+3. Set `DATABASE_URL` to the Neon connection string in Render's secret environment settings when prompted. Review and apply the deployment. After it succeeds, open the deployed `onrender.com` URL and create your account.
 
-The Blueprint uses paid plans for the Docker web service and managed PostgreSQL. Render supplies `PORT`, `RENDER_EXTERNAL_URL`, and the linked `DATABASE_URL`. Set `FOLIO_ORIGIN` to your exact HTTPS origin if you use a custom domain. If you provision the Docker service and PostgreSQL separately, set `DATABASE_URL` in the service environment.
+Render supplies `PORT` and `RENDER_EXTERNAL_URL`. Set `FOLIO_ORIGIN` to your exact HTTPS origin if you use a custom domain. Folio refuses to start on Render without `DATABASE_URL`, so accounts cannot accidentally be stored on Render's temporary filesystem. PostgreSQL remains the persistent store for all customers and sessions. Local Docker Compose still supports its persistent SQLite volume.
+
+This setup is suitable for a small launch or testing. [Render Free](https://render.com/docs/free) sleeps after 15 minutes without visitors and may take about a minute to wake. Its 750 monthly service hours are shared across the workspace. Neon Free has no trial expiry and currently includes 1 GB of database storage and 100 CU-hours per project each month. Both providers impose usage limits; stay on their Free plans to avoid paid upgrades. Review current provider limits before relying on it for a larger service.
+
+The `/healthz` endpoint verifies that the server completed startup. It does not query the database on every host probe, allowing Neon's compute to sleep when unused. Database failures are reported by the account and ledger APIs. Keep regular ledger backups; free hosting has limited recovery and availability guarantees.
 
 On Render, Folio uses the client IP header supplied by Render's public ingress for login rate limiting. Other hosts use the connection's socket address and ignore forwarded IP headers. Configure an additional per-client rate limit at your own reverse proxy when self-hosting behind one.
 
