@@ -1,3 +1,4 @@
+import { tripsResponse } from "./trips.mjs";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
@@ -179,6 +180,10 @@ export async function startServer(env = process.env, {
     const authResponse = await auth.handle(request);
     if (authResponse) {
       await sendWorkerResponse(authResponse, res);
+      return;
+    }
+    if (target.pathname === "/api/trips" || target.pathname.startsWith("/api/trips/")) {
+      await sendWorkerResponse(await tripsResponse(request, auth, database), res);
       return;
     }
     if (target.pathname === "/api/ledger") {

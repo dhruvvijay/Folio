@@ -84,6 +84,7 @@
     budgets: ["Budgets", "pie"],
     goals: ["Savings goals", "target"],
     bills: ["Bills & subscriptions", "bills"],
+    trips: ["Trips & splits", "plane"],
     reports: ["Reports", "report"],
     assistant: ["AI assistant", "sparkle"],
     settings: ["Settings", "settings"],
@@ -173,7 +174,7 @@
       </a>
       <div class="nav-label">Workspace</div>
       <nav class="nav-group" aria-label="Workspace">
-        ${["overview", "transactions", "budgets", "goals", "bills", "reports"].map(navLink).join("")}
+        ${["overview", "transactions", "budgets", "goals", "bills", ...(accountUser ? ["trips"] : []), "reports"].map(navLink).join("")}
       </nav>
       <div class="nav-label">Intelligence</div>
       <nav class="nav-group" aria-label="Intelligence">${navLink("assistant")}</nav>
@@ -487,12 +488,13 @@
       </div>`;
   }
 
-  const views = { overview, transactions, budgets, goals, bills, reports, assistant, settings };
+  const views = { trips: () => '<div id="trip-workspace"></div>', overview, transactions, budgets, goals, bills, reports, assistant, settings };
 
   function render() {
     if (!workspaceReady) return;
     updateNavigation();
     main.innerHTML = views[page]();
+    if (page === "trips" && accountUser) window.FolioTrips.mount(main.querySelector("#trip-workspace"), accountUser, state.currency);
     if (page === "settings" && accountUser) account.mountSettings();
     updateSyncWidgets();
   }
@@ -500,7 +502,7 @@
   function navigate() {
     if (!workspaceReady) return;
     const key = location.hash.slice(1);
-    const next = Object.hasOwn(pages, key) ? key : "overview";
+    const next = Object.hasOwn(pages, key) && (key !== "trips" || accountUser) ? key : "overview";
     const changed = next !== page;
     page = next;
     setMenu(false);

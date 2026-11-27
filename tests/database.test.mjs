@@ -58,7 +58,7 @@ test("portable accounts migrate an existing SQLite ledger once and preserve its 
   const row = await upgraded.DB.prepare("SELECT workspace, revision, state FROM folio_ledgers WHERE workspace = ?")
     .bind("legacy-workspace").first();
   assert.deepEqual(row, { workspace: "legacy-workspace", revision: 7, state: "{}" });
-  assert.deepEqual(await upgraded.query("SELECT version FROM folio_portable_migrations"), { rows: [{ version: 1 }] });
+  assert.deepEqual(await upgraded.query("SELECT version FROM folio_portable_migrations ORDER BY version"), { rows: [{ version: 1 }, { version: 2 }] });
   assert.deepEqual(await upgraded.query("SELECT id FROM folio_users"), { rows: [] });
 });
 

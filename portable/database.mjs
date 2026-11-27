@@ -73,6 +73,10 @@ async function applyMigrations(query, runScript, schemas) {
     await runScript(schemas.accounts);
     await query("INSERT INTO folio_portable_migrations (version) VALUES (?)", [1]);
   }
+  if (!(await query("SELECT version FROM folio_portable_migrations WHERE version = ?", [2])).rows.length) {
+    await runScript(schemas.trips);
+    await query("INSERT INTO folio_portable_migrations (version) VALUES (?)", [2]);
+  }
   await query(healthQuery);
 }
 
@@ -254,11 +258,12 @@ export async function getDatabase(env = process.env) {
     throw new Error("Set DATABASE_URL to a persistent PostgreSQL database before starting Folio on this host.");
   }
   try {
-    const [ledgers, accounts] = await Promise.all([
+    const [ledgers, accounts, trips] = await Promise.all([
       readFile(ledgerMigration, "utf8"),
       readFile(accountsMigration, "utf8"),
+      readFile(new URL("./migrations/002_trips.sql", import.meta.url), "utf8"),
     ]);
-    const schemas = { ledgers: ledgers.replace(/^CREATE TABLE\b/u, "CREATE TABLE IF NOT EXISTS"), accounts };
+    const schemas = { ledgers: ledgers.replace(/^CREATE TABLE\b/u, "CREATE TABLE IF NOT EXISTS"), accounts, trips };
     return postgres ? await openPostgres(env.DATABASE_URL, schemas) : await openSQLite(env.FOLIO_SQLITE_PATH, schemas);
   } catch (error) {
     const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,32}$/u.test(error.code) ? ` (${error.code})` : "";

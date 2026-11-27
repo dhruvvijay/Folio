@@ -14,6 +14,14 @@ Accounts share one database, with separate ledger records selected by the authen
 
 A public GitHub repository makes the code available to readers. People create and sign in to their own accounts on the running Folio site.
 
+## Trips & splits
+
+Open **Trips & splits** to create a trip, choose its currency and optionally set a group budget. The creator manages the trip. Add friends by name to split bills immediately. To give a friend access, generate a code for their place and share it privately. They sign in and enter the code under **Join a trip**. Each code works once, lasts 24 hours, and is replaced when a new one is generated for that friend.
+
+Members see trip bills and balances and can add bills they paid. The manager can enter bills for anyone, confirm repayments, and undo the latest entry to correct a mistake. Enter one share each for an equal split, zero to exclude a person, or different numbers for a weighted split. Folio allocates the remaining cents so the shares always sum to the bill. Suggested repayments balance the group without transferring money. The spending total counts bills only. Refresh a shared trip to see recent changes.
+
+Trip history is shared with its members. Personal ledgers stay private. Deleting the manager’s account also deletes their trips.
+
 ## Docker Compose
 
 1. Run `docker compose up -d --build`.

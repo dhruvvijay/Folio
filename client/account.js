@@ -509,7 +509,7 @@
       section("Change password", "Changing your password signs out other browsers and replaces your recovery code.", passwordForm) +
       section("Replace recovery code", "The old code stops working when you create a new one.", codeForm) +
       section("Sign out on all devices", "This signs you out here and in all other browsers.", signOut) +
-      section("Delete account", "Delete your account and the ledger stored with it. You can download a backup first.", deletion, true) + '</section>';
+      section("Delete account", "Delete your account, its ledger, and any trips you manage. Shared trips managed by others keep their bill history. You can download a backup first.", deletion, true) + '</section>';
     settings.querySelector("#folio-profile-name").value = user.name;
   }
 
