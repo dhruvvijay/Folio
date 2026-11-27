@@ -230,3 +230,39 @@ test('trip manager splits a bill, invites a friend and records a repayment witho
   assert.equal((await call('/api/ledger',{cookie:friend.cookie})).data.state,null);
   assert.equal((await call('/api/trips'+path+'/member',{method:'POST',source:null,cookie:manager.cookie,headers:{'X-Folio-Account':manager.data.user.id},body:{revision:6,name:'bad'}})).status,403);
 });
+
+test('trip planning scopes votes, permits changing a vote and freezes estimates for the original group', async t => {
+  const {call,signup}=await setup(t);
+  const owner=await signup('host@example.test');
+  const guest=await signup('guest@example.test');
+  const req=(u,path,body)=>call('/api/trips'+path,{cookie:u.cookie,headers:{'X-Folio-Account':u.data.user.id},body,method:body?'POST':'GET'});
+  const created=await req(owner,'',{name:'Holiday',currency:'INR'});
+  const path='/'+created.data.id;
+  let trip=created.data;
+  async function update(u,action,body,status=200){
+    const response=await req(u,path+'/'+action,{...body,revision:trip.revision});
+    assert.equal(response.status,status,JSON.stringify(response.data));
+    if(status===200)trip=response.data;
+  }
+  await update(owner,'member',{name:'Friend'});
+  const member=trip.members.find(m=>!m.linked).id;
+  await update(owner,'invite',{member});
+  trip=(await req(guest,'/join',{code:trip.code})).data;
+  await update(guest,'propose',{name:'Rejected',amount:100},403);
+  await update(owner,'propose',{name:'Train',amount:10001});
+  await update(owner,'propose',{name:'Bus',amount:8000});
+  const [bus,train]=trip.plans;
+  await update(guest,'vote',{plan:train.id});
+  await update(guest,'vote',{plan:bus.id});
+  assert.deepEqual(trip.plans.map(p=>p.votes),[1,0]);
+  assert.equal((await req(owner,path)).data.myVote,null);
+  await update(guest,'vote',{plan:null});
+  assert.equal(trip.plans[0].votes,0);
+  await update(guest,'vote',{plan:bus.id});
+  await update(guest,'choose',{plan:bus.id},403);
+  await update(owner,'choose',{plan:bus.id});
+  assert.equal(trip.plans.find(p=>p.chosen).myEstimate,4000);
+  await update(owner,'member',{name:'Late addition'});
+  assert.equal(trip.plans.find(p=>p.chosen).myEstimate,4000);
+  await update(guest,'vote',{plan:train.id},409);
+});

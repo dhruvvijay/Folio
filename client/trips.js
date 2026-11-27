@@ -32,6 +32,47 @@
         <section class="card"><h2>Create a trip</h2><form data-trip-form="create"><label>Trip name<input name="name" required maxlength="80" placeholder="Goa weekend"></label><label>Trip currency<select name="currency">${options}</select></label>${amountInput('budget','Group budget (optional)',false)}${btn('Create trip')}</form></section>
         <section class="card"><h2>Join a trip</h2><form data-trip-form="join"><label>One-use invitation code<input required name="code" maxlength="32" autocomplete="off" spellcheck="false"></label>${btn('Join trip')}</form></section>`);
     }
+    function planner(t) {
+      const chosen = t.plans.find(p => p.chosen);
+      if (chosen) {
+        const mine = t.entries.filter(e => e.kind === 'bill').reduce((sum, e) =>
+          sum + (e.shares.find(s => s.id === t.me)?.amount ?? 0), 0);
+        const diff = t.spent - chosen.amount;
+        return `<section class="card trip-wide"><h2>Trip rewind · ${esc(chosen.name)}</h2>
+          <p>Group estimate <strong>${fmt(chosen.amount)}</strong> · Bills so far <strong>${fmt(t.spent)}</strong></p>
+          <p>${diff === 0 ? 'Spending matches the plan.' : fmt(Math.abs(diff)) + (diff > 0 ? ' over the estimate.' : ' left before reaching the estimate.')}</p>
+          <p>Your share of bills: <strong>${fmt(mine)}</strong>. ${chosen.myEstimate === null ?
+          'You joined after the estimate was set.' : 'Your original estimate was ' + fmt(chosen.myEstimate) + '.'}</p></section>`;
+      }
+      const cards = t.plans.map(p => {
+        const voting = p.id === t.myVote;
+        return `<li><div><strong>${esc(p.name)}</strong><p>${fmt(p.amount)} total · ${fmt(p.myEstimate)} your share</p>
+          <p data-fit="${p.myEstimate}"></p><small>${p.votes} ${p.votes===1?'vote':'votes'}${voting?' · Your choice':''}</small></div>
+          <div class="plan-actions">${btn(voting?'Withdraw vote':'Vote for this', 'type="button" data-vote="'+(voting?'withdraw':p.id)+'"')}
+          ${t.manager?btn('Choose for trip','type="button" data-choose="'+p.id+'"'):''}</div></li>`;
+      }).join('');
+      return `<section class="card trip-wide"><h2>Can I join this trip?</h2>
+        ${t.plans.length ? `<p>Estimates split each option equally across the ${t.members.length} people currently listed. Each account has one vote. The group sees the totals.</p>
+          <label>Your spending limit (private to this tab)<input data-trip-limit type="number" min="0" step="0.01" max="9999999.99" placeholder="Optional"></label>
+          <ul>${cards}</ul>` : '<p>Compare possible trips before booking. The manager can add options with a group estimate.</p>'}
+        ${t.manager && t.plans.length<8 ? `<form data-trip-form="propose"><label>Plan option<input required name="name" maxlength="80" placeholder="Two nights by the lake"></label>
+          ${amountInput('amount','Estimated group total')}${btn('Add plan option')}</form>` : ''}</section>`;
+    }
+    // Affordability calculations run in this view only. The limit never enters an API payload.
+    const limits = new Map();
+    function updateFit(input) {
+      limits.set(trip.id,input.value);
+      let limit = null;
+      try { if(input.value && input.validity.valid) limit=moneyInput(input.value); } catch {}
+      for(const row of root.querySelectorAll('[data-fit]')){
+        const difference = limit - Number(row.dataset.fit);
+        row.textContent = limit===null ? '' : difference===0 ? 'Exactly at your limit.' :
+          fmt(Math.abs(difference)) + (difference>0?' below your limit.':' above your limit.');
+      }
+    }
+    root.addEventListener('input',event=>{
+      if(event.target.hasAttribute('data-trip-limit'))updateFit(event.target);
+    });
     function show(t){
       if(!active())return;
       trip=t;
@@ -45,9 +86,12 @@
       layout(t.name,(t.manager?'You manage this trip':'Shared trip')+' · '+t.currency,
         `<section class="card"><h2>Trip spending</h2><p class="trip-total">${fmt(t.spent)}</p><p>${esc(status)}</p></section>
         <section class="card"><h2>Balances</h2><ul>${balances}</ul></section>
+        ${planner(t)}
         <section class="card"><h2>Split a bill</h2><form data-trip-form="bill"><label>What was it for?<input name="description" required maxlength="120" placeholder="Dinner on Saturday"></label>${amountInput('amount','Bill total')}<label>Paid by<select name="payer">${options(t.members.filter(m=>t.manager || m.id===t.me))}</select></label><fieldset><legend>Split by shares</legend><p>Use 1 each for an equal split, 0 to skip someone, or a larger number for a bigger share.</p>${t.members.map(m=>`<label class="trip-share">${esc(m.name)}<input name="w-${esc(m.id)}" type="number" min="0" max="100" step="1" value="1" required></label>`).join('')}</fieldset>${btn('Save split bill')}</form></section>
         <section class="card"><h2>Settle up</h2>${transfers?`<ul>${transfers}</ul><p>Record a repayment after money has changed hands.</p>`:'<p>Everyone is even.</p>'}</section>${manage}
         <section class="card trip-wide"><h2>Trip history</h2>${bills?`<ul>${bills}</ul>${t.manager?btn('Undo latest entry','type="button" data-undo'):''}`:'<p>No bills recorded yet.</p>'}</section>`,true);
+      const limitInput=root.querySelector('[data-trip-limit]');
+      if(limitInput){limitInput.value=limits.get(t.id) || '';updateFit(limitInput);}
       if(t.code){
         root.querySelector('[data-code]').innerHTML=`<label>Share privately with this friend<input readonly value="${esc(t.code)}"></label><p>The code works once and expires in 24 hours. Generating another replaces it.</p>`;
         root.querySelector('[data-code] input').select();
@@ -67,6 +111,9 @@
       if(b.hasAttribute('data-trip-list'))void run(list);
       if(b.hasAttribute('data-trip-refresh'))void run(refresh);
       if(b.dataset.tripOpen)void run(()=>api('/'+b.dataset.tripOpen).then(show));
+      if(b.dataset.vote) void run(()=>api('/'+trip.id+'/vote',{plan:b.dataset.vote==='withdraw'?null:b.dataset.vote,revision:trip.revision}).then(show));
+      if(b.dataset.choose && confirm('Close voting and use this option as the fixed estimate for Trip rewind?'))
+        void run(()=>api('/'+trip.id+'/choose',{plan:b.dataset.choose,revision:trip.revision}).then(show));
       if(b.dataset.repay!==undefined){
         const s=trip.transfers[Number(b.dataset.repay)];
         if(confirm('Confirm this repayment has already been made?'))void run(()=>api('/'+trip.id+'/settle',{...s,revision:trip.revision}).then(show));
@@ -80,6 +127,7 @@
         if(action==='create')return show(await api('',{name:d.get('name'),currency:d.get('currency'),budget:moneyInput(d.get('budget')||'0')}));
         if(action==='join')return show(await api('/join',{code:d.get('code').trim()}));
         const body={revision:trip.revision};
+        if(action==='propose')Object.assign(body,{name:d.get('name'),amount:moneyInput(d.get('amount'))});
         if(action==='member')body.name=d.get('name');
         if(action==='invite')body.member=d.get('member');
         if(action==='bill')Object.assign(body,{payer:d.get('payer'),description:d.get('description'),amount:moneyInput(d.get('amount')),shares:trip.members.map(m=>({id:m.id,weight:Number(d.get('w-'+m.id))})).filter(s=>s.weight>0)});

@@ -20,6 +20,8 @@ Open **Trips & splits** to create a trip, choose its currency and optionally set
 
 Members see trip bills and balances and can add bills they paid. The manager can enter bills for anyone, confirm repayments, and undo the latest entry to correct a mistake. Enter one share each for an equal split, zero to exclude a person, or different numbers for a weighted split. Folio allocates the remaining cents so the shares always sum to the bill. Suggested repayments balance the group without transferring money. The spending total counts bills only. Refresh a shared trip to see recent changes.
 
+Before booking, the manager can propose options under **Can I join this trip?**. Members can compare equal shares with a spending limit held only in the open view and change or withdraw their vote. The group sees vote counts. Choosing an option closes voting and saves the original estimates. **Trip rewind** compares those estimates with the group’s bills and your actual share, excluding repayments.
+
 Trip history is shared with its members. Personal ledgers stay private. Deleting the manager’s account also deletes their trips.
 
 ## Docker Compose

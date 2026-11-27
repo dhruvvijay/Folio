@@ -44,6 +44,36 @@ export function summarize(members,entries){
   return {spent,balance,transfers};
 }
 
+function equalShares(amount, members) {
+  const shares = members.map(m => ({id:m.id, weight:1}));
+  return Object.fromEntries(allocate(amount, shares, new Set(members.map(m=>m.id))).map(s => [s.id,s.amount]));
+}
+
+async function changePlan(tx, trip, user, action, input) {
+  check(!trip.plans.some(p => p.chosen), 'The group has already chosen its plan.', 409);
+  if (action === 'propose') {
+    check(trip.manager, 'Only the manager can propose a plan.', 403);
+    check(trip.plans.length < 8, 'A trip can have up to eight options.');
+    await tx.query('INSERT INTO folio_trip_plans(id,trip_id,name,amount) VALUES (?,?,?,?)',
+      [randomUUID(), trip.id, label(input.name,80), cents(input.amount)]);
+    return;
+  }
+  const plan = trip.plans.find(p => p.id === input.plan);
+  if (action === 'vote' && input.plan === null) {
+    await tx.query('DELETE FROM folio_trip_votes WHERE trip_id=? AND user_id=?',[trip.id,user.id]);
+    return;
+  }
+  check(plan,'Choose an option from this trip.');
+  if (action === 'vote') {
+    await tx.query(`INSERT INTO folio_trip_votes(trip_id,plan_id,user_id) VALUES (?,?,?)
+      ON CONFLICT(trip_id,user_id) DO UPDATE SET plan_id=excluded.plan_id`,[trip.id,plan.id,user.id]);
+    return;
+  }
+  check(trip.manager,'Only the manager can confirm the group plan.',403);
+  await tx.query('UPDATE folio_trip_plans SET selected_shares=? WHERE trip_id=? AND id=?',
+    [JSON.stringify(equalShares(plan.amount,trip.members)),trip.id,plan.id]);
+}
+
 async function readBody(req){
   check(req.headers.get('origin')===new URL(req.url).origin,'Open Folio directly to make changes.',403);
   check(req.headers.get('content-type')?.split(';')[0]==='application/json','Send JSON.',415);
@@ -61,7 +91,18 @@ async function detail(tx,id,user){
   const me=members.find(m=>m.user_id===user.id);
   check(trip && me,'Trip not found.',404);
   const entries=(await tx.query('SELECT id,payload FROM folio_trip_entries WHERE trip_id=? ORDER BY seq',[id])).rows.map(r=>({id:r.id,...JSON.parse(r.payload)}));
-  return {id,name:trip.name,currency:trip.currency,budget:trip.budget,revision:trip.revision,manager:trip.owner_id===user.id,me:me.id,
+  const plans = (await tx.query(`
+    SELECT p.id,p.name,p.amount,p.selected_shares,COUNT(v.user_id) AS votes
+    FROM folio_trip_plans p LEFT JOIN folio_trip_votes v ON v.plan_id=p.id
+    WHERE p.trip_id=? GROUP BY p.id,p.name,p.amount,p.selected_shares ORDER BY p.amount,p.id
+  `, [id])).rows.map(p => ({
+    id:p.id, name:p.name, amount:p.amount, votes:Number(p.votes),
+    chosen:p.selected_shares !== null,
+    myEstimate:p.selected_shares !== null ? (JSON.parse(p.selected_shares)[me.id] ?? null)
+      : equalShares(p.amount, members)[me.id],
+  }));
+  const vote = (await tx.query('SELECT plan_id FROM folio_trip_votes WHERE trip_id=? AND user_id=?',[id,user.id])).rows[0];
+  return {plans,myVote:vote?.plan_id ?? null,id,name:trip.name,currency:trip.currency,budget:trip.budget,revision:trip.revision,manager:trip.owner_id===user.id,me:me.id,
     members:members.map(m=>({id:m.id,name:m.name,linked:!!m.user_id})),entries,...summarize(members,entries)};
 }
 export async function tripsResponse(req,auth,db){
@@ -90,7 +131,7 @@ export async function tripsResponse(req,auth,db){
         check((await tx.query('UPDATE folio_trip_members SET user_id=?,invite_hash=NULL,expires=NULL WHERE trip_id=? AND invite_hash=? AND expires>? AND user_id IS NULL RETURNING id',[user.id,slot.trip_id,digest,Date.now()])).rows.length,'Invitation expired or already used.',404);
         return detail(tx,slot.trip_id,user);
       }
-      const match=/^\/api\/trips\/([a-f0-9-]{36})(?:\/(member|invite|bill|settle|undo))?$/.exec(path);
+      const match=/^\/api\/trips\/([a-f0-9-]{36})(?:\/(member|invite|bill|settle|undo|propose|vote|choose))?$/.exec(path);
       check(match && post===!!match[2],'Trip not found.',404);
       const [,id,action]=match;
       if(post){
@@ -102,7 +143,9 @@ export async function tripsResponse(req,auth,db){
       const ids=new Set(t.members.map(m=>m.id));
       if(action==='member' || action==='invite' || action==='undo')check(t.manager,'Only the trip manager can do this.',403);
       let code;
-      if(action==='member'){
+      if(['propose','vote','choose'].includes(action)){
+        await changePlan(tx,t,user,action,b);
+      } else if(action==='member'){
         check(ids.size<40,'A trip can have up to 40 people.');
         await tx.query('INSERT INTO folio_trip_members(id,trip_id,name) VALUES (?,?,?)',[randomUUID(),id,label(b.name,80)]);
       } else if(action==='invite'){
